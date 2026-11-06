@@ -1,24 +1,15 @@
 package task
 
-import (
-	"context"
-	"errors"
-)
+import "context"
 
-var (
-	ErrNotFound   = errors.New("задача не найдена")
-	ErrEmptyTitle = errors.New("название задачи не должно быть пустым")
-	ErrNoChanges  = errors.New("не указано ни одного поля для изменения")
-)
-
-// Repository описывает операции с задачами, которые нужны HTTP-слою.
-//
-// Handler не обязан знать, находится ли реализация в PostgreSQL, памяти или
-// тестовом fake. На этом занятии рабочая реализация — PostgresStore.
+// Repository описывает только те операции с данными, которые нужны UseCase.
+// Интерфейс находится рядом с потребителем. UseCase не знает, выполняются ли
+// операции через память или тестовый fake.
 type Repository interface {
-	List(ctx context.Context) ([]Task, error)
+	Create(ctx context.Context, ownerID int64, input CreateInput) (Task, error)
 	Get(ctx context.Context, id int64) (Task, error)
-	Create(ctx context.Context, title string) (Task, error)
-	Patch(ctx context.Context, id int64, changes Changes) (Task, error)
+	List(ctx context.Context, ownerID int64) ([]Task, error)
+	Update(ctx context.Context, id int64, input UpdateInput) (Task, error)
 	Delete(ctx context.Context, id int64) error
+	CountActive(ctx context.Context, ownerID int64) (int, error)
 }

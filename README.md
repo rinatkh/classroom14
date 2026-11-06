@@ -1,159 +1,210 @@
-# Занятие 15. PostgreSQL: первые данные Backend API
+# Classroom 14 — PostgreSQL для того же Task API
 
-На прошлом backend-занятии Task API хранил задачи в `map`. После остановки
-сервера всё исчезало. На этом занятии тот же HTTP API подключается к PostgreSQL:
+Это первое занятие раздела PostgreSQL. Исходник — **финальный Classroom 13**.
+Для сравнения открываем его настоящий каталог, без вложенной копии проекта.
+Там уже есть архитектура, User, bcrypt, JWT,
+authentication middleware, request context, Task.OwnerID и authorization.
+Проблема одна: Memory Repositories теряют пользователей и задачи после restart.
 
-```text
-HTTP request → handler → PostgresStore → SQL → PostgreSQL
-                                            ↓
-HTTP response ← JSON ← Task ← RETURNING / SELECT
+В финале заменяем **оба** Repository и wiring. Handler, DTO/Mapper, UseCase,
+JWT, middleware, password hashing, ownership и HTTP contract не переписываем.
+Так показываем, зачем на занятиях 12–13 вводили Repository interfaces.
+
+## Главный diff
+
+```diff
+- userRepository := memory.NewUserRepository()
+- taskRepository := memory.NewTaskRepository()
++ // Сначала создать и проверить pool подключения.
++ userRepository := postgres.NewUserRepository(pool)
++ taskRepository := postgres.NewTaskRepository(pool)
 ```
 
-Главная цель — понять путь данных, а не выучить SQL наизусть.
+Ниже остаются те же passwordHasher, tokenManager, authUseCase, taskUseCase,
+handlers, authMiddleware и router. Полный diff main и проверка неизменности
+остальных файлов описаны в [continuity](docs/continuity.md).
 
-## Что разберём
+Было: Handler → UseCase → Repository interface ← Memory implementation.
+Стало: Handler → UseCase → тот же Repository interface ← Postgres implementation.
+Прямого Handler → Postgres пути нет. В task/user нет SQL или типов драйвера.
 
-- база данных, схема, таблица, строка и колонка;
-- типы `bigint`, `text`, `boolean`, `timestamptz` и значение `NULL`;
-- `PRIMARY KEY`, `UNIQUE`, `FOREIGN KEY`, `CHECK`, `NOT NULL`, `DEFAULT`;
-- `CREATE`, `INSERT`, `SELECT`, `UPDATE`, `DELETE`, `JOIN`;
-- параметры `$1`, `$2` вместо склеивания SQL-строк;
-- индексы и чтение простого плана через `EXPLAIN`;
-- транзакции `BEGIN`, `COMMIT`, `ROLLBACK`;
-- комментарии SQL и `COMMENT ON`;
-- trigger, который обновляет `updated_at`;
-- подключение Go через `pgxpool`;
-- `Query`, `QueryRow`, `Scan`, `Exec` и `pgx.ErrNoRows`;
-- HTTP-тесты с fake repository и интеграционный тест с PostgreSQL.
+## Сравнение с исходной версией
 
-## Структура проекта
-
-```text
-classroom/
-├── cmd/api/main.go                 запуск сервера и подключение к БД
-├── internal/httpapi/               HTTP router и handlers
-├── internal/task/                  модель, Repository и PostgresStore
-├── migrations/                     создание и удаление схемы
-├── sql/                            маленькие SQL-эксперименты урока
-├── scripts/curl-demo.sh            ручная проверка API
-├── docs/                           установка, памятки и антипримеры
-├── Makefile
-└── go.mod
-```
-
-Разделение небольшое: HTTP-слой знает язык HTTP, `PostgresStore` знает SQL,
-а `main` соединяет эти части. Сложную архитектуру в первом уроке по базе не
-добавляем.
-
-## Подготовка PostgreSQL
-
-Нужны локальные `postgres` и `psql`. Подробности для macOS, Linux и Windows:
-[docs/setup.md](docs/setup.md).
-
-Создайте две базы:
+Go остаётся **1.22.x** (`go 1.22.0`); нового toolchain урок не требует.
 
 ```bash
-createdb -U postgres go_course_tasks
-createdb -U postgres go_course_tasks_test
+export JWT_SECRET="$(openssl rand -hex 32)"
+make -C "../../13 Занятие/classroom13" run
+# Во втором терминале из classroom13:
+make curl-demo
 ```
 
-Если у пользователя `postgres` установлен пароль `postgres`, готовые строки
-подключения уже находятся в `.env.example`. При другом пароле измените URL
-только у себя и не добавляйте его в Git.
+Для эксперимента register/login/create и потери данных при restart используйте
+[шаг 0 live coding](docs/live-coding-script.md). Рабочий старт — classroom13/cmd/api.
+При отдельном репозитории укажите свой путь к classroom13. Для работы classroom14
+соседний проект не требуется.
 
-`make` автоматически читает локальный `.env`. Сам Go этот файл не загружает:
-для прямого `go run ./cmd/api` нужно сначала выполнить `export DATABASE_URL=...`.
-В маршруте занятия используем `make run`, поэтому достаточно создать `.env`.
+## Финальная версия с persistence
 
-## Первый запуск
+Установите PostgreSQL 16+, psql и pg_dump, создайте отдельные локальные учебные базы по
+[docs/setup.md](docs/setup.md). Затем в первом терминале:
 
 ```bash
-cp .env.example .env
-make db-up
+export DATABASE_URL='postgres://course_user:course-local-password@localhost:5432/go_course_tasks?sslmode=disable'
+export TEST_DATABASE_URL='postgres://course_user:course-local-password@localhost:5432/go_course_tasks_test?sslmode=disable'
+export JWT_SECRET="$(openssl rand -hex 32)"
+make up
 make run
 ```
 
-В другом терминале:
+Пример credentials относится к локальному setup из инструкции. Makefile не
+читает .env автоматически; значения нужно export-нуть. Остановите API classroom13,
+если он занял 8080. HTTP_ADDR и TOKEN_TTL работают как в 13, defaults :8080 и 2h.
+
+Во втором терминале:
 
 ```bash
-curl -i http://localhost:8080/health
-curl -i -X POST http://localhost:8080/tasks \
-  -H 'Content-Type: application/json' \
-  -d '{"title":"Понять PostgreSQL"}'
-curl -i http://localhost:8080/tasks
+make curl-demo
 ```
 
-Ожидаем `200`, затем `201 Created`, затем список с сохранённой задачей.
-Остановите и снова запустите Go-сервер: задача останется в PostgreSQL.
+Это **тот же curl script из 13**: register/login Alice/Bob, Task CRUD, 401,
+403 на чужие операции, partial PATCH и прежние business conflicts. Его сценарий
+сам удаляет созданную Task; для persistence demo оставьте отдельную задачу по
+[docs/persistence-demo.md](docs/persistence-demo.md).
 
-Готовый сценарий `make curl-demo` проходит весь lifecycle: health, создание,
-список, чтение одной задачи, PATCH, повторное чтение, DELETE, `404` и ошибочный
-JSON. Скрипт берёт ID из ответа POST, поэтому не предполагает, что он равен `1`.
+После restart с тем же DATABASE_URL и JWT_SECRET login снова работает и Task
+остаётся. Ключ между перезапусками API не пересоздаём. Пользовательские ID теперь
+сохраняются в БД; один и тот же ещё действующий JWT тоже продолжает работать.
 
-## Маршрут live coding
+## Прежний HTTP contract
 
-1. Открыть `migrations/001_init.up.sql` и прочитать таблицу сверху вниз.
-2. Выполнить `make db-up`, затем открыть `psql "$DATABASE_URL"`.
-3. Выполнить файлы `sql/01_...` — `sql/08_...` по порядку.
-4. На каждом `UPDATE` и `DELETE` сначала показать `WHERE`.
-5. В `EXPLAIN` не требовать Index Scan на трёх строках: выбор Seq Scan нормален.
-6. Открыть `cmd/api/main.go`: `New` → `Ping` → `defer Close`.
-7. Открыть `internal/task/postgres.go` и вместе реализовать запросы.
-8. Запустить API и пройти `POST → GET → PATCH → DELETE`.
-9. Перезапустить сервер и обсудить, почему данные не исчезли.
-10. Запустить unit-тесты, затем интеграционный тест с отдельной БД.
+| Endpoint | Доступ | Успех |
+|---|---|---:|
+| GET /health | public, {"status":"ok"} | 200 |
+| POST /register | public, User DTO id/email | 201 |
+| POST /login | public, token | 200 |
+| GET /tasks | authenticated, только свои Task | 200 |
+| GET /tasks/{id} | owner | 200 |
+| POST /tasks | authenticated, OwnerID из identity | 201 + Location |
+| PATCH /tasks/{id} | owner, partial update | 200 |
+| DELETE /tasks/{id} | owner, без body | 204 |
 
-Полный сценарий преподавателя: [docs/live_coding.md](docs/live_coding.md).
+Task JSON остаётся id/title/done; OwnerID и даты внутренние. Порядок списка
+сохранён: id ASC. Ошибки прежние: 400 для входа, 401 для authentication, 403 для
+ownership, 404 для отсутствующей Task, 405 для method, 409 для duplicate email/
+повторного завершения/лимита, нейтральный 500 для внутренних ошибок.
 
-## Команды
+## Схема из существующего домена
 
-| Команда | Что делает |
+User 1:N Task. Две таблицы из migration 001:
+
+| Таблица | Поля и ограничения |
 |---|---|
-| `make run` | запускает API на `:8080` |
-| `make db-up` | применяет первую миграцию |
-| `make db-down` | удаляет учебную схему |
-| `make db-reset` | пересоздаёт схему и добавляет примеры |
-| `make sql-demo` | выполняет полный SQL-сценарий |
-| `make test` | запускает быстрые тесты без настоящей БД |
-| `make test-db-up` | применяет миграцию к отдельной тестовой БД |
-| `make test-db-down` | удаляет учебную схему из тестовой БД |
-| `make test-db-reset` | пересоздаёт схему только в тестовой БД |
-| `make test-db` | пересоздаёт тестовую схему и запускает интеграционные тесты |
-| `make test-race` | проверяет Go-код race detector-ом |
-| `make ci` | форматирование, vet, unit- и race-тесты |
-| `make ci-db` | то же плюс интеграционный тест |
-| `make curl-demo` | проверяет полный HTTP lifecycle уже запущенного API |
+| users | id bigint identity PK; email text NOT NULL UNIQUE; password_hash text NOT NULL; created_at timestamptz DEFAULT now() |
+| tasks | id bigint identity PK; owner_id NOT NULL FK; title NOT NULL CHECK btrim(title) <> ''; done NOT NULL DEFAULT false; timestamps DEFAULT now() |
 
-`make test-db` безопасно использует `TEST_DATABASE_URL`, а не `DATABASE_URL`.
-Команда каждый раз применяет `down/up`, поэтому на чистой тестовой базе нет
-скрытого шага с ручным запуском миграции.
+FK ссылается на users(id). Выбран ON DELETE CASCADE: удаление учебного User
+удаляет его Task. Это осознанная политика данных; HTTP endpoint удаления User
+не добавляем. Если требовалось бы хранить историю после удаления, выбрали бы
+другую стратегию. Up создаёт users → tasks, down удаляет tasks → users.
 
-## Что важно заметить
+Email нормализуется прежним AuthUseCase; extension не добавляем. Repository
+сопоставляет unique violation users_email_key с user.ErrAlreadyExists, а
+pgx.ErrNoRows — с существующими ErrNotFound. FK/внутренние ошибки остаются за
+нейтральным HTTP mapping. Пароль хранится только как прежний bcrypt hash.
 
-- `pgxpool.New` создаёт pool, а `Ping` проверяет реальное соединение.
-- `r.Context()` передаётся в каждый запрос к БД. Отмена HTTP-запроса сможет
-  остановить ненужную работу с PostgreSQL.
-- `QueryRow(...).Scan(...)` получает одну строку; `Query` возвращает несколько.
-- `pgx.ErrNoRows` — нормальный результат поиска отсутствующего ID, поэтому API
-  переводит его в `404`, а не в `500`.
-- SQL-параметры `$1`, `$2` отделяют данные пользователя от текста запроса.
-- `RETURNING` позволяет одним запросом изменить строку и получить результат.
+Индекс `(owner_id, id)` соответствует настоящему `WHERE owner_id=$1 ORDER BY
+id ASC` из урока13. Порядок не меняем на created_at DESC ради другого индекса.
+Production Update явно меняет updated_at; trigger оставлен отдельным optional lab.
 
-## Как не нужно
+## Где появился новый код
 
-Антипримеры разобраны в [docs/bad_examples.md](docs/bad_examples.md). Самые
-важные: `UPDATE` без `WHERE`, склеивание SQL со вводом пользователя, забытый
-`rows.Close`, хранение пароля в Git и индекс «на всякий случай».
+```text
+cmd/api/main.go                      pool + выбор двух postgres implementations
+cmd/migrate/main.go                  отдельные команды goose up/down/status
+internal/repository/postgres/
+    db.go                           только инфраструктурный DBTX
+    user.go                         прежний user.Repository через SQL
+    task.go                         прежний task.Repository через SQL
+    *_integration_test.go           отдельные real PostgreSQL checks
+internal/repository/memory/           сохранены reference/fast-test implementations
+internal/task, user, auth, httpapi/   прежние Model/UseCase/DTO/Mapper/HTTP/auth
+migrations/001_init.sql              goose Up и Down в одном файле
+structure.sql                        полный schema-only снимок public
+scripts/dump-structure.sh            обновление снимка через pg_dump
+sql/                                 SQL experiments на users/tasks
+```
 
-## Вопросы
+## Миграции и полная структура схемы
 
-1. Кто теперь выдаёт `id`: Go-код или PostgreSQL?
-2. Чем `PRIMARY KEY` отличается от `FOREIGN KEY`?
-3. Почему `NULL` — не то же самое, что пустая строка или ноль?
-4. Почему `$1` безопаснее `"..." + title`?
-5. Когда использовать `QueryRow`, а когда `Query`?
-6. Почему отсутствие строки превращается в `404`?
-7. Почему небольшой `SELECT` может выбрать `Seq Scan`, даже если индекс есть?
-8. Что сохранит `COMMIT` и что отменит `ROLLBACK`?
-9. Когда срабатывает trigger `tasks_set_updated_at`?
-10. Почему HTTP handler не содержит SQL?
+`migrations/001_init.sql` содержит `-- +goose Up`, `-- +goose Down` и пары
+`StatementBegin` / `StatementEnd`, как в принятом SQL-формате. Транзакцией и
+историей применений управляет goose; вручную BEGIN/COMMIT здесь не добавляем.
+
+```bash
+make up          # применить ещё не выполненные Up
+make status      # applied/pending и текущая версия
+make down        # откатить последнюю миграцию: tasks → users
+make structure   # обновить structure.sql через pg_dump --schema-only
+```
+
+Команды используют goose v3.22.1 через `cmd/migrate`; отдельный CLI устанавливать
+не нужно, Go остаётся 1.22. Старые `make db-up` / `make db-down` — алиасы up/down.
+Не запускайте общий SQL-файл через psql -f: psql не различает секции goose и
+выполнит обе. Используйте up/down.
+
+В корневом [structure.sql](structure.sql) сразу видны таблицы users/tasks,
+identity sequences, поля/типы, defaults, PK/UNIQUE/FK/CHECK, индекс, комментарии
+и структура служебной goose_db_version. Данных пользователей и истории применений
+в schema-only dump нет. Это справочный снимок, источником изменений остаются migrations.
+Для обновления нужны pg_dump и DATABASE_URL; владельцы/ACL в снимок не включаются.
+Сценарий перехода с уже применённого старого SQL без потери данных — в
+[setup](docs/setup.md#если-старая-схема-уже-создана-через-psql).
+
+## Быстрые и database tests
+
+```bash
+gofmt -w $(find . -name '*.go' -not -path './bin/*')
+go test ./...
+go vet ./...
+go test -race ./...
+make build
+```
+
+Эти проверки не подключаются к PostgreSQL. Существующие unit/HTTP tests
+используют fake/memory, как в 13. Отдельно, с TEST_DATABASE_URL:
+
+```bash
+make test-db
+make test-db-race
+```
+
+Тесты с `-tags=integration` создают свою схему, применяют ту же migration и
+убирают только эту схему. Они не TRUNCATE-ят пользовательские таблицы.
+Если DSN не задан, explicit integration run завершается ошибкой, а не Skip.
+`make ci` — быстрые проверки; `make ci-db` добавляет database checks.
+
+## SQL fundamentals на users/tasks
+
+```bash
+make sql-demo
+# Дополнительно:
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f sql/08_trigger.sql
+```
+
+Лаборатории показывают database/schema/table/row/column, типы/NULL, constraints,
+INSERT/SELECT/UPDATE/DELETE/WHERE/JOIN, индекс/EXPLAIN, BEGIN/SAVEPOINT/ROLLBACK.
+Query/QueryRow/Scan/Exec, параметры $1 и ErrNoRows разбираем в Repository.
+Lab data и optional trigger откатываются. Выданные identity numbers могут иметь
+пропуски: sequence allocation не откатывается вместе с INSERT, это нормально.
+
+Порядок занятия — [live coding](docs/live-coding-script.md).
+Детали — [SQL cheat sheet](docs/sql-cheatsheet.md),
+[architecture](docs/architecture.md), [interview](docs/interview.md).
+Homework и презентации не меняются; новые users/tasks HTTP features не добавляются.
+
+## Логи
+
+[Уровни DEBUG / INFO / ERROR / FATAL, LOG_LEVEL и безопасные поля](docs/logging.md).
+
+`LOG_LEVEL=DEBUG make run` включает диагностику; обычный запуск использует INFO.

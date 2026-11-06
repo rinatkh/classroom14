@@ -1,17 +1,9 @@
--- INSERT добавляет строки. RETURNING сразу показывает созданные данные,
--- включая ID и время, которые сформировал PostgreSQL.
-INSERT INTO tasks (title)
-VALUES
-    ('Подключить PostgreSQL'),
-    ('Написать SELECT'),
-    ('Проверить Task API')
-RETURNING id, title, done, created_at;
-
--- Укажем task_id через подзапрос, чтобы пример не зависел от конкретного ID.
-INSERT INTO task_comments (task_id, body)
-SELECT id, 'Первый комментарий к задаче'
-FROM tasks
-WHERE title = 'Подключить PostgreSQL'
-ORDER BY id DESC
-LIMIT 1
-RETURNING id, task_id, body;
+BEGIN;
+\ir _seed.sql
+-- INSERT ... RETURNING получает ID и DEFAULT, назначенные базой.
+INSERT INTO tasks(owner_id,title)
+SELECT id,'INSERT from psql' FROM users WHERE email='sql-lab-alice@example.test'
+RETURNING id,owner_id,title,done,created_at,updated_at;
+SELECT id,email FROM users WHERE email LIKE 'sql-lab-%' ORDER BY id;
+-- Для постоянного сохранения транзакции нужен COMMIT; этот опыт убирает свои данные.
+ROLLBACK;

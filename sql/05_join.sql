@@ -1,19 +1,9 @@
--- JOIN соединяет строку комментария со строкой его задачи по ключам.
-SELECT
-    t.id AS task_id,
-    t.title,
-    c.id AS comment_id,
-    c.body
-FROM tasks AS t
-JOIN task_comments AS c ON c.task_id = t.id
-ORDER BY c.id;
-
--- LEFT JOIN сохраняет даже задачи без комментариев.
-SELECT
-    t.id,
-    t.title,
-    count(c.id) AS comments_count
-FROM tasks AS t
-LEFT JOIN task_comments AS c ON c.task_id = t.id
-GROUP BY t.id, t.title
+BEGIN;
+\ir _seed.sql
+-- Естественная связь из урока 13: один User владеет многими Task.
+SELECT t.id,t.title,u.email
+FROM tasks t
+JOIN users u ON u.id=t.owner_id
+WHERE u.email IN ('sql-lab-alice@example.test','sql-lab-bob@example.test')
 ORDER BY t.id;
+ROLLBACK;

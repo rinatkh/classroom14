@@ -1,16 +1,21 @@
--- EXPLAIN показывает план, но не выполняет SELECT.
--- На маленькой таблице PostgreSQL может честно выбрать Seq Scan: прочитать
--- несколько строк целиком дешевле, чем обращаться к индексу.
-EXPLAIN
-SELECT id, title, created_at
-FROM tasks
-WHERE done = false
-ORDER BY created_at DESC;
+BEGIN;
+-- Создаём историю нескольких пользователей; всё откатится после EXPLAIN.
+INSERT INTO users(email,password_hash)
+SELECT 'sql-index-user-'||n||'@example.test','$2a$04$QF1evtslwnuNLCts9sksXul0sitJbs4PMmvnA7v01tLZEofBdSd5e'
+FROM generate_series(1,200) n
+ON CONFLICT (email) DO NOTHING;
+INSERT INTO tasks(owner_id,title,done)
+SELECT u.id,'history '||n,true
+FROM users u CROSS JOIN generate_series(1,50) n
+WHERE u.email LIKE 'sql-index-user-%@example.test';
+ANALYZE users;
+ANALYZE tasks;
 
--- EXPLAIN ANALYZE действительно выполняет запрос и измеряет его.
--- Для UPDATE/DELETE используйте его только внутри откатываемой транзакции.
-EXPLAIN (ANALYZE, BUFFERS)
-SELECT id, title, created_at
+-- (owner_id,id) возник из WHERE owner_id + прежнего ORDER BY id ASC.
+EXPLAIN (ANALYZE,BUFFERS)
+SELECT id,owner_id,title,done,created_at,updated_at
 FROM tasks
-WHERE done = false
-ORDER BY created_at DESC;
+WHERE owner_id=(SELECT id FROM users WHERE email='sql-index-user-42@example.test')
+ORDER BY id ASC;
+-- На маленьких таблицах Seq Scan может быть дешевле: индекс не обещание конкретного plan.
+ROLLBACK;

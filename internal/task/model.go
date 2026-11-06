@@ -1,24 +1,29 @@
+// Package task содержит внутреннюю модель и бизнес-сценарии Task API.
 package task
 
 import "time"
 
-// Task — задача, которую API получает из PostgreSQL и возвращает клиенту.
+// Task — внутренняя модель задачи.
 //
-// В прошлом занятии ID выдавал счётчик внутри Store. Теперь ID создаёт сама
-// база данных. Временные поля тоже приходят из PostgreSQL: created_at задаёт
-// DEFAULT, а updated_at обновляет trigger.
+// Здесь нет JSON-тегов, HTTP status или типов инфраструктуры. Внешний HTTP-контракт
+// описан отдельными DTO, а способ хранения скрыт за Repository.
 type Task struct {
-	ID        int64     `json:"id"`
-	Title     string    `json:"title"`
-	Done      bool      `json:"done"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        int64
+	OwnerID   int64
+	Title     string
+	Done      bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
-// Changes описывает частичное изменение Task.
-// nil означает «клиент не прислал поле», а указатель на значение означает
-// «поле присутствовало в JSON и его нужно записать».
-type Changes struct {
+// CreateInput описывает данные, которые нужны бизнес-сценарию создания.
+type CreateInput struct {
+	Title string
+}
+
+// UpdateInput описывает частичное изменение Task.
+// nil означает, что поле не прислали и его не нужно менять.
+type UpdateInput struct {
 	Title *string
 	Done  *bool
 }

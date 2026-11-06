@@ -1,12 +1,13 @@
--- SELECT читает только перечисленные колонки. Явный список надёжнее SELECT *:
--- результат не изменится случайно после добавления новой колонки в таблицу.
-SELECT id, title, done, created_at, updated_at
+BEGIN;
+\ir _seed.sql
+\pset null '(NULL)'
+SELECT NULL = NULL AS unknown_boolean, NULL IS NULL AS is_null;
+SELECT pg_typeof(id),pg_typeof(owner_id),pg_typeof(title),pg_typeof(done),pg_typeof(created_at)
+FROM tasks LIMIT 1;
+-- Именно такой query pattern уже есть в Task Repository.
+SELECT id,title,done
 FROM tasks
-ORDER BY id DESC;
-
--- WHERE оставляет только строки, которые подходят под условие.
-SELECT id, title
-FROM tasks
-WHERE done = false
-ORDER BY created_at DESC
-LIMIT 2;
+WHERE owner_id=(SELECT id FROM users WHERE email='sql-lab-alice@example.test')
+ORDER BY id ASC;
+SELECT id,title FROM tasks WHERE done=false ORDER BY id;
+ROLLBACK;
